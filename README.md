@@ -1,3 +1,60 @@
+# FTEC5660 reproducibility study
+
+This submission reproduces the simulated telemetry experiment in Section 6 of [Real-Time Detection and Repair of LLM Agent Failures](https://arxiv.org/abs/2608.02464) by Sunny Dubey. The baseline uses the [upstream release commit](https://github.com/sunnydubey1111/agent-trajectory-sentinel/commit/00c0673adc54f74be84babbcb63f67e460f54e41). The modification changes only the H1 false-alarm budget, `FA_BUDGET`, from 5% to 2%. The detector and seed list stay the same for the paired comparison.
+
+## Install on Windows
+
+Install Git and Python 3.14. The experiment was run on a CPU with Python 3.14.0. The simulator generates the data locally and requires no model API key. Open PowerShell in a folder where you can create a checkout and a sibling virtual environment.
+
+```powershell
+git clone --branch ftec5660-reproduction https://github.com/phillipyang62/agent-trajectory-sentinel.git sentinel-reproduction
+Set-Location .\sentinel-reproduction
+py -3.14 -m venv ..\.venv-sentinel
+$python = (Resolve-Path ..\.venv-sentinel\Scripts\python.exe).Path
+& $python -m pip install -r .\requirements-core.lock.txt
+```
+
+## Run the 5% baseline and the 2% variant
+
+Run the following from `sentinel-reproduction` in the same PowerShell session. The baseline worktree uses the pinned upstream commit. The submission branch contains the 2% change. Both runs use the five original seeds and the full simulation.
+
+```powershell
+$baselineCommit = '00c0673adc54f74be84babbcb63f67e460f54e41'
+git worktree add --detach ..\sentinel-fa05 $baselineCommit
+$baseline = (Resolve-Path ..\sentinel-fa05).Path
+$seeds = 20260713, 7, 101, 202, 303
+$out = Join-Path (Split-Path -Parent (Get-Location).Path) ('sentinel-output-' + (Get-Date -Format yyyyMMdd-HHmmss))
+
+function Run-SentinelSeeds($source, $name) {
+    $env:AGENTWATCH_RESULTS_ROOT = Join-Path $out $name
+    Push-Location -LiteralPath $source
+    try {
+        foreach ($seed in $seeds) {
+            & $python -B -u -m derail.experiments.run_experiment --seed $seed
+            if ($LASTEXITCODE -ne 0) { throw "Run failed for $name, seed $seed" }
+        }
+    } finally {
+        Pop-Location
+    }
+}
+
+Run-SentinelSeeds $baseline 'fa05'
+Run-SentinelSeeds (Get-Location).Path 'fa02'
+Remove-Item Env:\AGENTWATCH_RESULTS_ROOT
+```
+
+For each budget, seed `20260713` writes directly to the corresponding `fa05` or `fa02` output directory. The remaining seeds write to `seed<seed>` subdirectories. In each `tables/h1_main.csv`, use the `esn_cusum_max` row and average `healthy_fa_rate`, `detection_rate` and `mean_lead_all` over the five seeds. The two rate columns are fractions in the CSV.
+
+| Five-seed test mean | 5% budget | 2% budget |
+| --- | ---: | ---: |
+| False-alarm rate on healthy episodes | 4.375% | 2.625% |
+| Fault detection rate | 70.65% | 64.05% |
+| Alarm lead over all faulty episodes | 4.613 steps | 3.7665 steps |
+
+The false-alarm budget is used to select a threshold on healthy validation episodes. The reported false-alarm rate is measured on separate test episodes.
+
+---
+
 # AgentTrajectorySentinel — Real-Time Detection and Repair of LLM Agent Failures
 
 **[Paper — arXiv:2608.02464](https://arxiv.org/abs/2608.02464)**
